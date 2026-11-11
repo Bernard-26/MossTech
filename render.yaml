@@ -19,9 +19,9 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: REQUIRE_EMAIL_VERIFICATION
-        value: "1"
+        value: "0"
       - key: REQUIRE_ADMIN_2FA
-        value: "1"
+        value: "0"
       - key: ADMIN_PASSKEY
         sync: false          # you type the value in the Render dashboard
       - key: BREVO_API_KEY    # email over HTTPS (Render's free plan blocks SMTP)
