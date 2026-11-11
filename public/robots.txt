@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin.html
+Disallow: /cart.html
+Disallow: /order.html
+
+Sitemap: https://mosstech.onrender.com/sitemap.xml
