@@ -1,0 +1,42 @@
+# Render "Blueprint": New + > Blueprint > pick your GitHub repo.
+# Free plan = the database resets whenever the service restarts or redeploys.
+# For permanent data: change plan to "starter" and uncomment the disk + DB_PATH lines.
+services:
+  - type: web
+    name: mosstech
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: "22"
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "1"
+      - key: REQUIRE_ADMIN_2FA
+        value: "1"
+      - key: ADMIN_PASSKEY
+        sync: false          # you type the value in the Render dashboard
+      - key: BREVO_API_KEY    # email over HTTPS (Render's free plan blocks SMTP)
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SEED_ADMIN_USERNAME
+        sync: false
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+#      - key: DB_PATH
+#        value: /var/data/mosstech.db
+#    disk:
+#      name: mosstech-data
+#      mountPath: /var/data
+#      sizeGB: 1

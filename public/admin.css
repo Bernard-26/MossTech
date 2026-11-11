@@ -1,0 +1,287 @@
+:root {
+  --primary: #121212;        /* Dark Obsidian Background */
+  --secondary: #1e1e1e;      /* Surface Card Background */
+  --accent: #4ade80;         /* Neon Sage Highlight Accent */
+  --text-main: #f4f4f5;      /* Primary White/Off-White Text */
+  --text-muted: #a1a1aa;     /* Secondary Muted Gray Text */
+  --border-color: #27272a;   /* Subtle Modern Dark Border */
+  --container: 1200px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+  background-color: var(--primary);
+  color: var(--text-main);
+  min-height: 100vh;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--primary);
+}
+
+/* Header & Navigation */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(to right, var(--secondary), var(--primary));
+  border-bottom: 2px solid var(--accent);
+  padding: 12px 30px;
+  color: var(--text-main);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.logo-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-icon {
+  background: var(--primary);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 16px;
+}
+
+.logo-text {
+  color: var(--text-main);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.nav-menu {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+  list-style: none;
+}
+
+.nav-item a {
+  color: var(--text-main);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+.nav-item.active a,
+.nav-item a:hover {
+  background-color: var(--accent);
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.admin-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+}
+
+.badge {
+  background-color: var(--accent);
+  color: var(--primary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+
+.logout-btn {
+  background-color: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+.logout-btn:hover {
+  background-color: var(--accent);
+  color: var(--primary);
+}
+
+/* Layout & Sections */
+.content {
+  padding: 30px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.tab-section {
+  display: none;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.tab-section.active-view {
+  display: flex;
+}
+
+.page-title {
+  font-size: 1.5rem;
+  color: var(--accent);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  background: var(--secondary);
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+}
+
+.card h3 {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.card .value {
+  font-size: 1.6rem;
+  font-weight: bold;
+  color: var(--accent);
+}
+
+/* Headings and small text that use inline colors in admin.html */
+.card h2 {
+  color: var(--accent) !important;
+}
+td small {
+  color: var(--text-muted) !important;
+}
+
+/* Form fields (settings tab and the add/edit popups) */
+input,
+select,
+textarea {
+  background-color: var(--primary) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.15);
+}
+
+/* Popups created by admin.js (add/edit product, order details) */
+#admin-modal {
+  background: rgba(0, 0, 0, 0.7) !important;
+}
+#admin-modal > div {
+  background: var(--secondary) !important;
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+#admin-modal h2 {
+  color: var(--accent) !important;
+}
+
+/* User & Order Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--secondary);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+}
+
+th,
+td {
+  padding: 12px 15px;
+  text-align: left;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+th {
+  background-color: var(--border-color);
+  color: var(--accent);
+}
+
+tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+tbody tr:hover {
+  background-color: rgba(74, 222, 128, 0.07);
+}
+
+.hash-code {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: var(--primary);
+  border: 1px solid var(--border-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.role-tag {
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+.role-admin {
+  background-color: rgba(74, 222, 128, 0.18);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.role-user {
+  background-color: var(--border-color);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+
+/* Order Badges & Select Controls */
+.status-select {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.order-item-list {
+  font-size: 0.85rem;
+  padding-left: 15px;
+  color: var(--text-muted);
+}

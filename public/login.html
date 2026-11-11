@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login / Sign Up - MOSSTECH</title>
+  <link rel="stylesheet" href="login.css">
+</head>
+<body>
+
+<div class="container">
+  <div class="tab">
+    <button id="loginTab" class="active">LOGIN</button>
+    <button id="signupTab">SIGN UP</button>
+  </div>
+
+  <h2 class="title" id="formTitle">Log In</h2>
+
+  <!-- LOGIN FORM -->
+  <div id="loginForm">
+    <input type="text" id="loginEmail" placeholder="Username or Email">
+    <input type="password" id="loginPassword" placeholder="Password">
+    
+    <button type="button" id="loginBtn">Login</button>
+    <p class="error" id="loginError"></p>
+    <p class="success" id="loginSuccess"></p>
+
+    <p class="forgot-pass-wrapper">
+      <a href="#" id="forgotLink">Forgot Password?</a>
+    </p>
+  </div>
+
+  <!-- SIGN UP FORM -->
+  <div id="signupForm" class="hidden-form">
+    <input type="text" id="signupUname" placeholder="Username">
+    <input type="email" id="signupEmail" placeholder="Email">
+    <input type="password" id="signupPassword" placeholder="Password">
+    <input type="password" id="signupPassword2" placeholder="Confirm Password">
+    <p id="passWarning" class="pass-warning"></p>
+
+    <!-- Account Type Selection -->
+    <select id="signupRole" class="role-select">
+      <option value="user">Account Type: Customer / User</option>
+      <option value="admin">Account Type: Administrator</option>
+    </select>
+
+    <!-- Admin Secret Key Input (Hidden by Default) -->
+    <input type="password" id="adminSecretKey" class="admin-key-input" placeholder="Enter Admin Passkey">
+
+    <div class="checkbox-container">
+      <input type="checkbox" id="terms">
+      <label for="terms">I agree to the <a href="#">Terms and Conditions</a></label>
+    </div>
+
+    <button type="button" id="signupBtn">Create Account</button>
+    <p class="error" id="signupError"></p>
+    <p class="success" id="signupSuccess"></p>
+  </div>
+</div>
+
+<!-- SECURE CUSTOM MODAL -->
+<div id="securityModal" class="modal-overlay">
+  <div class="modal-card">
+    <h3 id="modalTitle">Verification Required</h3>
+    <p id="modalDescription" class="modal-description"></p>
+    
+    <input type="text" id="modalInput1" placeholder="">
+    <input type="password" id="modalInput2" placeholder="" class="hidden-form">
+
+    <p id="modalError" class="modal-error"></p>
+    <p class="forgot-pass-wrapper"><a href="#" id="modalResend" style="display:none;">Resend code</a></p>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" id="modalCancelBtn">Cancel</button>
+      <button class="btn-confirm" id="modalConfirmBtn">Submit</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MOSSTECH - Admin Dashboard</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+  <!-- Navigation Header -->
+  <header class="header">
+    <div class="logo-container">
+      <div class="logo-icon">🌿</div>
+      <span class="logo-text">MOSSTECH</span>
+    </div>
+    <ul class="nav-menu">
+      <li class="nav-item active"><a data-tab="dashboard-view">Dashboard Home</a></li>
+      <li class="nav-item"><a data-tab="users-view">User Accounts</a></li>
+      <li class="nav-item"><a data-tab="inventory-view">Product Inventory</a></li>
+      <li class="nav-item"><a data-tab="orders-view">Order History</a></li>
+      <li class="nav-item"><a data-tab="settings-view">Settings</a></li>
+    </ul>
+    <div class="admin-info">
+      <span id="admin-name">Admin User</span>
+      <span class="badge">Super Admin</span>
+      <button class="logout-btn" id="logoutBtn">Log-out</button>
+    </div>
+  </header>
+
+  <!-- Main Views Container -->
+  <main class="content">
+
+    <!-- TAB 1: DASHBOARD OVERVIEW -->
+    <section id="dashboard-view" class="tab-section active-view">
+      <h1 class="page-title">Overview Dashboard</h1>
+      <div class="stats-grid">
+        <div class="card">
+          <h3>Total Registered Users</h3>
+          <div class="value" id="users-count-val">0</div>
+        </div>
+        <div class="card">
+          <h3>Total Orders Placed</h3>
+          <div class="value" id="orders-count-val">0</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: USER ACCOUNTS -->
+    <section id="users-view" class="tab-section">
+      <h1 class="page-title">User Accounts Management</h1>
+      <div class="card">
+        <h2 style="font-size: 1.1rem; margin-bottom: 15px; color: #1b4332;">Registered Accounts List</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Username</th>
+              <th>Masked Email</th>
+              <th>Account Role</th>
+              <th>Password Status</th>
+            </tr>
+          </thead>
+          <tbody id="user-accounts-table">
+            <!-- Loaded dynamically via admin.js from MySQL -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 3: PRODUCT INVENTORY -->
+    <section id="inventory-view" class="tab-section">
+      <h1 class="page-title">Product Inventory</h1>
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+          <h2 style="font-size: 1.1rem; color: #1b4332; margin: 0;">Store Products</h2>
+          <button id="addProductBtn" style="background-color: #2e7d32; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: bold;">+ Add Product</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Image</th>
+              <th>Product Name</th>
+              <th>Price (₱)</th>
+              <th>Stock</th>
+              <th style="text-align: center;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="inventory-table-body">
+            <!-- Loaded dynamically via admin.js from MySQL -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 4: ORDER HISTORY -->
+    <section id="orders-view" class="tab-section">
+      <h1 class="page-title">Order History & Management</h1>
+      <div class="card">
+        <h2 style="font-size: 1.1rem; margin-bottom: 15px; color: #1b4332;">Customer Orders</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Order #</th>
+              <th>Customer</th>
+              <th>Items Purchased</th>
+              <th>Total Amount</th>
+              <th>Payment</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="orders-history-table">
+            <!-- Loaded dynamically via admin.js from MySQL -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 5: SETTINGS -->
+    <section id="settings-view" class="tab-section">
+      <h1 class="page-title">Settings</h1>
+      <div class="card" style="max-width: 700px; margin-bottom: 20px;">
+        <h2 style="font-size: 1.1rem; margin-bottom: 15px; color: #1b4332;">Store Configuration</h2>
+        <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9rem;">Store Name:</label>
+        <input type="text" value="MoshTech Ecommerce" style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+
+        <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9rem;">Support Email:</label>
+        <input type="email" value="support@moshtech.com" style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+
+        <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9rem;">Default Shipping Fee (₱):</label>
+        <input type="number" value="59.00" style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+
+        <button style="background-color: #2e7d32; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">Save Changes</button>
+      </div>
+
+      <div class="card" style="max-width: 700px;">
+        <h2 style="font-size: 1.1rem; margin-bottom: 15px; color: #1b4332;">Security & Access Control</h2>
+        <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9rem;">Update Admin Passkey (`ADMIN_SECRET`):</label>
+        <input type="password" id="newAdminKey" placeholder="Enter new admin passkey" style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+
+        <button style="background-color: #d32f2f; color: white; border: none; padding: 9px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">Update Passkey</button>
+      </div>
+      <div class="card" id="twofa-card" style="max-width: 700px; margin-top: 20px;">
+        <h2 style="font-size: 1.1rem; margin-bottom: 15px; color: #1b4332;">Two-Factor Authentication (2FA)</h2>
+        <div id="twofa-body"></div>
+      </div>
+      <div class="card" id="audit-card" style="max-width: 700px; margin-top: 20px;">
+        <h2 style="font-size: 1.1rem; margin-bottom: 8px; color: #1b4332;">Security Audit Log</h2>
+        <p style="margin: 0 0 10px; font-size: 0.85rem;">The last 200 security events: logins, failed attempts, password resets, 2FA changes and admin actions.</p>
+        <div style="overflow: auto; max-height: 360px;">
+          <table>
+            <thead><tr><th>Time</th><th>User</th><th>Event</th><th>Detail</th><th>IP</th></tr></thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script src="common.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

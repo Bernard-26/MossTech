@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shopping Cart & Checkout</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Science+Gothic:wght@100..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="cart.css">
+</head>
+<body>
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="inner">
+      <a href="help.html">Help Center</a>
+      <a href="order.html">Order Status</a>
+    </div>
+  </div>
+
+  <!-- Main Header -->
+  <header class="main-header">
+    <div class="inner">
+
+      <div class="brand">
+        <img src="pics/logo.jpg" alt="Mosstech Logo" width="120" height="120">
+        <h2>mosstech</h2>
+      </div>
+
+      <nav>
+        <div class="nav-links">
+          <a href="home.html">Home</a>
+          <a href="product.html">Products</a>
+          <a href="about.html">About</a>
+          <a href="login.html" id="navAuthBtn">Sign In</a>
+          <a href="cart.html"><i class="fa fa-cart-shopping"></i></a>
+        </div>
+      </nav>
+
+    </div>
+  </header>
+
+  <!-- Cart Section -->
+  <div class="cart-container" id="cart-section">
+    <h1>Your Cart</h1>
+
+    <table class="cart-table">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Price</th>
+          <th>Quantity</th>
+          <th>Total</th>
+          <th>Remove</th>
+        </tr>
+      </thead>
+      <tbody id="cart-items">
+        <!-- Dynamic items from cart.js -->
+      </tbody>
+    </table>
+
+    <!-- Empty Cart Message -->
+    <p id="empty-cart-message" style="display:none; text-align:center; margin:30px 0; font-size:18px; color:#666;">
+      Your cart is empty. <a href="product.html">Shop now</a>
+    </p>
+
+    <!-- Cart Summary -->
+    <div class="cart-summary">
+      <h2>Total: ₱<span id="cart-total">0.00</span></h2>
+      <button id="checkout-btn">Proceed to Checkout</button>
+    </div>
+  </div>
+
+  <!-- Checkout Form -->
+  <div class="checkout-container" id="checkout-form" style="display:none;">
+    <h1>Checkout</h1>
+
+    <form id="checkoutForm">
+      <label>Name</label>
+      <input type="text" id="customerName" required placeholder="Full Name">
+
+      <label>Email</label>
+      <input type="email" id="customerEmail" required placeholder="Email">
+
+      <label>Phone</label>
+      <input type="tel" id="customerPhone" required placeholder="Phone Number">
+
+      <label>Address</label>
+      <textarea id="customerAddress" required placeholder="Delivery Address"></textarea>
+
+      <h3>Payment Method</h3>
+      <select id="paymentMethod" required>
+        <option value="">Select Payment Method</option>
+        <option value="Cash on Delivery">Cash on Delivery</option>
+        <option value="GCash">GCash</option>
+        <option value="Credit Card">Credit Card</option>
+      </select>
+
+      <button type="submit">Place Order</button>
+    </form>
+
+    <!-- Order Success Box -->
+    <div id="order-success" style="display:none; text-align:center;">
+      <h2>Order Placed Successfully!</h2>
+      <p>Your Order Number is: <span id="orderNumber"></span></p>
+      <p>
+        Track it here: 
+        <a href="order.html">Order Status</a>
+      </p>
+    </div>
+
+    <!-- Error Message -->
+    <p id="checkout-error" style="color:red; text-align:center; display:none;">
+      Please fill out all fields correctly.
+    </p>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" style="display:none;">
+    <div class="loading-spinner"></div>
+    <p>Processing your order...</p>
+  </div>
+
+  <!-- Footer -->
+  <footer class="main-footer">
+    <div class="footer-socials">
+      <a href="#"><img src="https://img.icons8.com/ios-filled/50/ffffff/facebook-new.png"></a>
+      <a href="#"><img src="https://img.icons8.com/ios-filled/50/ffffff/instagram-new.png"></a>
+      <a href="#"><img src="https://img.icons8.com/ios-filled/50/ffffff/twitter.png"></a>
+    </div>
+
+    <p class="footer-copy">&copy; 2025 MOSSTECH. All Rights Reserved.</p>
+  </footer>
+
+  <script src="common.js"></script>
+  <script src="cart.js"></script>
+</body>
+</html>

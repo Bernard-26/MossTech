@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Status | MOSSTECH</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Science+Gothic:wght@100..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="order.css">
+</head>
+<body>
+  <!-- Topbar -->
+   <!-- Topbar -->
+  <div class="topbar">
+    <div class="inner">
+      <a href="help.html">Help Center</a>
+      <a href="order.html">Order Status</a>
+    </div>
+  </div>
+
+  <!-- Main Header -->
+  <header class="main-header">
+    <div class="inner">
+
+      <div class="brand">
+        <img src="pics/logo.jpg" alt="Mosstech Logo" width="120" height="120">
+        <h2>mosstech</h2>
+      </div>
+
+      <nav>
+        <div class="nav-links">
+          <a href="home.html">Home</a>
+          <a href="product.html">Products</a>
+          <a href="about.html">About</a>
+          <a href="login.html" id="navAuthBtn">Sign In</a>
+          <a href="cart.html"><i class="fa fa-cart-shopping"></i></a>
+        </div>
+      </nav>
+
+    </div>
+  </header>
+
+
+<section class="content">
+  <div id="myOrdersBox" style="display:none;">
+    <h1>My Orders</h1>
+    <p>Orders placed while you were logged in. Status updates automatically.</p>
+    <div id="myOrders"></div>
+    <hr style="margin:30px 0;opacity:.3;">
+  </div>
+
+  <h1>Check Your Order Status</h1>
+  <p>Enter your order number and email used during purchase:</p>
+
+  <div class="order-form">
+    <input type="text" id="orderNumberInput" placeholder="Order Number">
+    <input type="email" id="emailInput" placeholder="Email used in purchase">
+    <button id="trackBtn">Track Order</button>
+  </div>
+
+  <div class="order-result" id="orderResult" style="display:none;"></div>
+
+  <div class="order-info">
+    <h3>Common Status Updates</h3>
+    <ul>
+      <li><strong>Processing</strong> – Your order is being prepared.</li>
+      <li><strong>Shipped</strong> – Your package is on the way.</li>
+      <li><strong>Out for Delivery</strong> – Expect delivery is 3 to 7 days.</li>
+      <li><strong>Delivered</strong> – Your order has arrived.</li>
+    </ul>
+  </div>
+</section>
+
+<footer class="main-footer">
+    <div class="footer-socials">
+      <a href="https://facebook.com" target="_blank"><img src="https://img.icons8.com/ios-filled/50/ffffff/facebook-new.png"/></a>
+      <a href="https://instagram.com" target="_blank"><img src="https://img.icons8.com/ios-filled/50/ffffff/instagram-new.png"/></a>
+      <a href="https://twitter.com" target="_blank"><img src="https://img.icons8.com/ios-filled/50/ffffff/twitter.png"/></a>
+    </div>
+
+    <p class="footer-copy">&copy; 2025 MOSSTECH. All Rights Reserved.</p>
+  </div>
+</footer>
+
+<script src="common.js"></script>
+  <script src="order.js"></script>
+</body>
+</html>
