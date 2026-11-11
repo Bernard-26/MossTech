@@ -53,7 +53,7 @@ app.get(['/admin.js', '/admin.css'], (req, res, next) => {
   next();
 });
 // Only normal website file types are ever served from public/ (no PDFs, archives, backups, source maps...)
-const PUBLIC_EXT = /\.(html|css|js|jpe?g|png|gif|webp|svg|ico|txt)$/i;
+const PUBLIC_EXT = /\.(html|css|js|jpe?g|png|gif|webp|svg|ico|txt|xml)$/i;
 app.use((req, res, next) => {
   if (/\.[A-Za-z0-9]+$/.test(req.path) && !PUBLIC_EXT.test(req.path)) return res.status(404).type('text').send('Not found');
   next();
