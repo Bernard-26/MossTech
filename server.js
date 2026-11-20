@@ -91,5 +91,6 @@ app.use((err, req, res, next) => {
   const seeded = seedProductsFromHtml(path.join(PUBLIC_DIR, 'product.html'));
   if (seeded) console.log(`Loaded ${seeded} products from product.html`);
 
+  require('./server/backup').schedule();
   app.listen(PORT, HOST, () => console.log(`MOSSTECH running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));
 })();

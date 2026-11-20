@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
-    "test": "node --no-warnings test/logic.test.js && node --no-warnings test/security.test.js"
+    "test": "node --no-warnings test/logic.test.js && node --no-warnings test/security.test.js && node --no-warnings test/backup.test.js",
+    "backup": "node --env-file-if-exists=.env server/backup.js"
   },
   "engines": {
     "node": ">=22.13"

@@ -14,6 +14,14 @@ router.use(S.requireAdmin); // every route below is administrator-only
 
 const CATEGORIES = ['laptops', 'cellphones', 'tablets', 'other'];
 
+router.get('/backup', (req, res) => {   // admin-only: fresh copy of the database
+  const file = require('../backup').backupNow();
+  const name = require('path').basename(file);
+  S.audit(req, 'backup_downloaded', name);
+  res.set('Cache-Control', 'no-store');
+  res.download(file, name);
+});
+
 router.get('/summary', (req, res) => {
   res.json({
     users: db.prepare('SELECT COUNT(*) AS n FROM users').get().n,
