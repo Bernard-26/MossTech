@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const crypto = require('crypto');
-const { db, getSetting } = require('../db');
+const { db, tx, getSetting } = require('../db');
 const S = require('../security');
 const { sendMail } = require('../mailer');
 const { verifySecondFactor } = require('../twofactor');
@@ -23,11 +23,11 @@ const sixDigits = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 async function issueVerificationCode(user) {
   const code = sixDigits();
   const now = Date.now();
-  db.prepare(
-    `INSERT INTO email_verifications(user_id, code_hash, expires_at, tries, sent_at) VALUES(?,?,?,0,?)
-     ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at,
-                                        tries = 0, sent_at = excluded.sent_at`)
-    .run(user.id, S.sha256(code), now + VERIFY_TTL_MS, now);
+  await db.run(
+    `INSERT INTO email_verifications(user_id, code_hash, expires_at, tries, sent_at) VALUES($1,$2,$3,0,$4)
+     ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at,
+                                         tries = 0, sent_at = EXCLUDED.sent_at`,
+    [user.id, S.sha256(code), now + VERIFY_TTL_MS, now]);
   await sendMail({
     to: user.email,
     subject: 'Your MOSSTECH verification code',
@@ -50,62 +50,67 @@ router.post('/signup', signupLimit, S.ah(async (req, res) => {
   if (issues.length) return res.status(400).json({ error: 'Password needs: ' + issues.join(', ') + '.' });
 
   if (role === 'admin') {
-    const stored = getSetting('admin_passkey_hash');
+    const stored = await getSetting('admin_passkey_hash');
     if (!stored) return res.status(403).json({ error: 'Administrator sign-up is disabled. Set ADMIN_PASSKEY in the server .env file.' });
     const key = 'passkey:' + req.ip;
-    const wait = S.lockRemaining(key);
+    const wait = await S.lockRemaining(key);
     if (wait) return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.` });
     if (!await S.verifySecret(str(b.adminKey, 300), stored)) {
-      S.registerFail(key);
-      S.audit(req, 'admin_signup_bad_passkey', `attempted username: ${username}`);
+      await S.registerFail(key);
+      await S.audit(req, 'admin_signup_bad_passkey', `attempted username: ${username}`);
       return res.status(403).json({ error: 'Invalid admin passkey.' });
     }
-    S.clearFails(key);
+    await S.clearFails(key);
   }
 
-  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) return res.status(409).json({ error: 'That username is already taken.' });
-  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) return res.status(409).json({ error: 'An account with that email already exists.' });
+  if (await db.one('SELECT 1 FROM users WHERE username = $1', [username])) return res.status(409).json({ error: 'That username is already taken.' });
+  if (await db.one('SELECT 1 FROM users WHERE email = $1', [email])) return res.status(409).json({ error: 'An account with that email already exists.' });
 
   const pw_hash = await S.hashSecret(password);
   let id;
   try {
-    id = db.prepare('INSERT INTO users(username, email, role, pw_hash, email_verified) VALUES(?,?,?,?,?)')
-      .run(username, email, role, pw_hash, REQUIRE_VERIFY ? 0 : 1).lastInsertRowid;
+    id = (await db.one('INSERT INTO users(username, email, role, pw_hash, email_verified) VALUES($1,$2,$3,$4,$5) RETURNING id',
+      [username, email, role, pw_hash, REQUIRE_VERIFY ? 0 : 1])).id;
   } catch (e) {
-    return res.status(409).json({ error: 'That username or email is already registered.' });
+    if (e.code === '23505') return res.status(409).json({ error: 'That username or email is already registered.' }); // unique violation (two sign-ups at once)
+    throw e;
   }
-  S.audit(req, role === 'admin' ? 'admin_account_created' : 'account_created', `username: ${username}`, { id: Number(id), username });
-  if (REQUIRE_VERIFY) await issueVerificationCode({ id: Number(id), email });
+  await S.audit(req, role === 'admin' ? 'admin_account_created' : 'account_created', `username: ${username}`, { id, username });
+  if (REQUIRE_VERIFY) await issueVerificationCode({ id, email });
   res.status(201).json({ ok: true, needsVerification: REQUIRE_VERIFY, email });
 }));
 
-router.post('/verify-email', resetLimit, (req, res) => {
+router.post('/verify-email', resetLimit, S.ah(async (req, res) => {
   const email = str((req.body || {}).email).trim().toLowerCase();
   const code = str((req.body || {}).code, 20).replace(/\s/g, '');
   const BAD = 'Invalid or expired verification code.';
   // Keyed by IP + email: a stranger cannot block the real owner from verifying their own address
   const lockKey = `verify:${req.ip}:${email}`;
-  const wait = S.lockRemaining(lockKey);
+  const wait = await S.lockRemaining(lockKey);
   if (wait) return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.` });
 
-  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-  const row = user && db.prepare('SELECT * FROM email_verifications WHERE user_id = ?').get(user.id);
-  if (!row || Date.now() > row.expires_at || row.tries >= 5) { S.registerFail(lockKey); return res.status(400).json({ error: BAD }); }
+  const user = await db.one('SELECT id FROM users WHERE email = $1', [email]);
+  // One atomic statement counts this attempt AND checks expiry / the 5-try limit, so parallel guesses cannot all
+  // get past a stale "tries" value. No row back = no code, expired, or out of tries.
+  const row = user && await db.one(
+    'UPDATE email_verifications SET tries = tries + 1 WHERE user_id = $1 AND tries < 5 AND expires_at >= $2 RETURNING code_hash',
+    [user.id, Date.now()]);
+  if (!row) { await S.registerFail(lockKey); return res.status(400).json({ error: BAD }); }
+  if (!/^\d{6}$/.test(code) || !S.safeEqual(S.sha256(code), row.code_hash)) { await S.registerFail(lockKey); return res.status(400).json({ error: BAD }); }
 
-  db.prepare('UPDATE email_verifications SET tries = tries + 1 WHERE user_id = ?').run(user.id);
-  if (!/^\d{6}$/.test(code) || !S.safeEqual(S.sha256(code), row.code_hash)) { S.registerFail(lockKey); return res.status(400).json({ error: BAD }); }
-
-  db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
-  db.prepare('DELETE FROM email_verifications WHERE user_id = ?').run(user.id);
-  S.clearFails(lockKey);
+  await tx(async (t) => {
+    await t.run('UPDATE users SET email_verified = 1 WHERE id = $1', [user.id]);
+    await t.run('DELETE FROM email_verifications WHERE user_id = $1', [user.id]);
+  });
+  await S.clearFails(lockKey);
   res.json({ ok: true });
-});
+}));
 
 router.post('/resend-code', resetLimit, S.ah(async (req, res) => {
   const email = str((req.body || {}).email).trim().toLowerCase();
-  const user = S.isValidEmail(email) && db.prepare('SELECT id, email, email_verified FROM users WHERE email = ?').get(email);
+  const user = S.isValidEmail(email) && await db.one('SELECT id, email, email_verified FROM users WHERE email = $1', [email]);
   if (user && !user.email_verified) {
-    const last = db.prepare('SELECT sent_at FROM email_verifications WHERE user_id = ?').get(user.id);
+    const last = await db.one('SELECT sent_at FROM email_verifications WHERE user_id = $1', [user.id]);
     if (!last || Date.now() - last.sent_at >= RESEND_GAP_MS) await issueVerificationCode(user);
   }
   res.json({ ok: true }); // same reply whether or not the account exists
@@ -115,10 +120,10 @@ router.post('/resend-code', resetLimit, S.ah(async (req, res) => {
 const challenges = new Map(); // sha256(challenge) -> { userId, expires, tries }
 setInterval(() => { const n = Date.now(); for (const [k, c] of challenges) if (n > c.expires) challenges.delete(k); }, 60 * 1000).unref();
 
-function finishLogin(req, res, user) {
-  if (req.sessionHash) S.destroySession(req, res); // never reuse an old session id
-  S.createSession(res, user.id);
-  S.audit(req, 'login_success', `role: ${user.role}`, user);
+async function finishLogin(req, res, user) {
+  if (req.sessionHash) await S.destroySession(req, res); // never reuse an old session id
+  await S.createSession(res, user.id);
+  await S.audit(req, 'login_success', `role: ${user.role}`, user);
   res.json({ user: publicUser(user) });
 }
 
@@ -130,19 +135,19 @@ router.post('/login', loginLimit, S.ah(async (req, res) => {
   // Two counters: (IP + account) locks after 5 misses; the account alone locks only after a much larger number
   // of misses from anywhere, so one stranger cannot easily lock a real user out, yet a distributed attack is still slowed.
   const ipKey = `login:${req.ip}:${id}`, acctKey = `login-acct:${id}`;
-  const wait = Math.max(S.lockRemaining(ipKey), S.lockRemaining(acctKey));
+  const wait = Math.max(await S.lockRemaining(ipKey), await S.lockRemaining(acctKey));
   if (wait) return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.` });
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(id, id);
+  const user = await db.one('SELECT * FROM users WHERE username = $1 OR email = $1', [id]);
   const ok = await S.verifySecret(password, user ? user.pw_hash : null); // same work whether or not the user exists
   if (!user || !ok) {
-    S.registerFail(ipKey);
-    S.registerFail(acctKey, { max: 30, lockMs: 3 * 60 * 1000 });
-    S.audit(req, 'login_failed', `account: ${id.slice(0, 60)}`);
+    await S.registerFail(ipKey);
+    await S.registerFail(acctKey, { max: 30, lockMs: 3 * 60 * 1000 });
+    await S.audit(req, 'login_failed', `account: ${id.slice(0, 60)}`);
     return res.status(401).json({ error: 'Invalid username/email or password.' });
   }
-  S.clearFails(ipKey);
-  S.clearFails(acctKey);
+  await S.clearFails(ipKey);
+  await S.clearFails(acctKey);
 
   if (REQUIRE_VERIFY && !user.email_verified) {
     return res.status(403).json({ error: 'Please verify your email address first.', needsVerification: true, email: user.email });
@@ -152,43 +157,44 @@ router.post('/login', loginLimit, S.ah(async (req, res) => {
     challenges.set(S.sha256(challenge), { userId: user.id, expires: Date.now() + 5 * 60 * 1000, tries: 0 });
     return res.json({ twoFactorRequired: true, challenge });
   }
-  finishLogin(req, res, user);
+  await finishLogin(req, res, user);
 }));
 
-router.post('/login/2fa', loginLimit, (req, res) => {
+router.post('/login/2fa', loginLimit, S.ah(async (req, res) => {
   const key = S.sha256(str((req.body || {}).challenge, 100));
   const entry = challenges.get(key);
   if (!entry || Date.now() > entry.expires) return res.status(401).json({ error: 'Your login session expired. Please log in again.', restart: true });
 
   const lockKey = '2fa:' + entry.userId;
-  const wait = S.lockRemaining(lockKey);
+  const wait = await S.lockRemaining(lockKey);
   if (wait) return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.` });
 
   if (++entry.tries > 5) { challenges.delete(key); return res.status(401).json({ error: 'Too many wrong codes. Please log in again.', restart: true }); }
-  if (!verifySecondFactor(entry.userId, (req.body || {}).code)) {
-    S.registerFail(lockKey);
-    S.audit(req, 'login_2fa_failed', `user id: ${entry.userId}`, { id: entry.userId, username: null });
+  if (!await verifySecondFactor(entry.userId, (req.body || {}).code)) {
+    await S.registerFail(lockKey);
+    await S.audit(req, 'login_2fa_failed', `user id: ${entry.userId}`, { id: entry.userId, username: null });
     return res.status(401).json({ error: 'Invalid code.' });
   }
   challenges.delete(key);
-  S.clearFails(lockKey);
-  const user = db.prepare('SELECT id, username, email, role FROM users WHERE id = ?').get(entry.userId);
-  finishLogin(req, res, user);
-});
+  await S.clearFails(lockKey);
+  const user = await db.one('SELECT id, username, email, role FROM users WHERE id = $1', [entry.userId]);
+  if (!user) return res.status(401).json({ error: 'Your login session expired. Please log in again.', restart: true });
+  await finishLogin(req, res, user);
+}));
 
-router.post('/logout', (req, res) => {
-  if (req.user) S.audit(req, 'logout');
-  S.destroySession(req, res);
+router.post('/logout', S.ah(async (req, res) => {
+  if (req.user) await S.audit(req, 'logout');
+  await S.destroySession(req, res);
   res.json({ ok: true });
-});
+}));
 
 // ---------- Forgot / reset password ----------
 const resetCodes = new Map(); // email -> { hash, expires, tries }
 
-router.post('/forgot', resetLimit, (req, res) => {
+router.post('/forgot', resetLimit, S.ah(async (req, res) => {
   const email = str((req.body || {}).email).trim().toLowerCase();
   if (!S.isValidEmail(email)) return res.status(400).json({ error: 'Please enter a valid email address.' });
-  const user = db.prepare('SELECT role FROM users WHERE email = ?').get(email);
+  const user = await db.one('SELECT role FROM users WHERE email = $1', [email]);
   if (user && user.role === 'user') {
     const code = sixDigits();
     resetCodes.set(email, { hash: S.sha256(code), expires: Date.now() + 5 * 60 * 1000, tries: 0 });
@@ -196,7 +202,7 @@ router.post('/forgot', resetLimit, (req, res) => {
       text: `Your MOSSTECH password reset code is ${code}\n\nIt is valid for 5 minutes. If you did not ask for this, ignore this email.` }).catch(() => {});
   }
   res.json({ ok: true });
-});
+}));
 
 router.post('/reset', resetLimit, S.ah(async (req, res) => {
   const b = req.body || {};
@@ -207,21 +213,21 @@ router.post('/reset', resetLimit, S.ah(async (req, res) => {
   if (!S.isValidEmail(email) || !secret) return res.status(400).json({ error: BAD });
 
   const resetKey = `reset:${req.ip}:${email}`;
-  const wait = S.lockRemaining(resetKey);
+  const wait = await S.lockRemaining(resetKey);
   if (wait) return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.` });
 
-  const user = db.prepare('SELECT id, username, role, totp_enabled FROM users WHERE email = ?').get(email);
+  const user = await db.one('SELECT id, username, role, totp_enabled FROM users WHERE email = $1', [email]);
   let ok = false;
   if (user && user.role === 'admin') {
-    ok = await S.verifySecret(secret, getSetting('admin_passkey_hash'));
+    ok = await S.verifySecret(secret, await getSetting('admin_passkey_hash'));
     // The passkey alone must not be enough to take over an admin who has 2FA: ask for the authenticator/backup code too.
     // (Only revealed AFTER the passkey was correct, so it tells an outsider nothing.)
     if (ok && user.totp_enabled) {
       const code = str(b.code, 20);
       if (!code) return res.status(400).json({ error: 'Enter the code from your authenticator app (or a backup code) too.', needsCode: true });
-      if (!verifySecondFactor(user.id, code)) {
-        S.registerFail(resetKey);
-        S.audit(req, 'admin_reset_bad_2fa', `account: ${user.username}`, user);
+      if (!await verifySecondFactor(user.id, code)) {
+        await S.registerFail(resetKey);
+        await S.audit(req, 'admin_reset_bad_2fa', `account: ${user.username}`, user);
         return res.status(400).json({ error: 'Invalid authenticator or backup code.', needsCode: true });
       }
     }
@@ -234,20 +240,20 @@ router.post('/reset', resetLimit, S.ah(async (req, res) => {
     }
   }
   if (!ok) {
-    S.registerFail(resetKey);
-    if (user) S.audit(req, 'password_reset_failed', `account: ${user.username}`, user);
+    await S.registerFail(resetKey);
+    if (user) await S.audit(req, 'password_reset_failed', `account: ${user.username}`, user);
     return res.status(400).json({ error: BAD });
   }
 
   const issues = S.passwordProblems(newPw);
   if (issues.length) return res.status(400).json({ error: 'Password needs: ' + issues.join(', ') + '.' });
 
-  db.prepare("UPDATE users SET pw_hash = ?, email_verified = CASE WHEN role = 'user' THEN 1 ELSE email_verified END WHERE id = ?")
-    .run(await S.hashSecret(newPw), user.id);
-  S.destroyAllSessions(user.id);
+  await db.run("UPDATE users SET pw_hash = $1, email_verified = CASE WHEN role = 'user' THEN 1 ELSE email_verified END WHERE id = $2",
+    [await S.hashSecret(newPw), user.id]);
+  await S.destroyAllSessions(user.id);
   resetCodes.delete(email);
-  S.clearFails(resetKey);
-  S.audit(req, 'password_reset', `account: ${user.username} (${user.role})`, user);
+  await S.clearFails(resetKey);
+  await S.audit(req, 'password_reset', `account: ${user.username} (${user.role})`, user);
   res.json({ ok: true });
 }));
 
@@ -260,29 +266,34 @@ router.delete('/account', S.ah(async (req, res) => {
   }
   const userId = req.user.id;
   const lockKey = 'delacct:' + userId;
-  const wait = S.lockRemaining(lockKey);
+  const wait = await S.lockRemaining(lockKey);
   if (wait) return res.status(429).json({ error: `Too many failed attempts. Try again in ${wait}s.` });
 
-  const me = db.prepare('SELECT pw_hash, role FROM users WHERE id = ?').get(userId);
+  const me = await db.one('SELECT pw_hash, role FROM users WHERE id = $1', [userId]);
   if (!me) return res.status(404).json({ error: 'User account not found.' });
   if (!await S.verifySecret(str((req.body || {}).password, 300), me.pw_hash)) {
-    S.registerFail(lockKey);
-    S.audit(req, 'account_delete_bad_password');
+    await S.registerFail(lockKey);
+    await S.audit(req, 'account_delete_bad_password');
     return res.status(403).json({ error: 'Your password is incorrect.' });
   }
-  if (me.role === 'admin' && db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n <= 1) {
-    return res.status(400).json({ error: 'You are the only administrator, so this account cannot be deleted.' });
-  }
-  S.clearFails(lockKey);
+  await S.clearFails(lockKey);
 
-  S.audit(req, 'account_deleted', `role: ${me.role}`);
-  db.prepare('DELETE FROM email_verifications WHERE user_id = ?').run(userId);
-  db.prepare('UPDATE orders SET user_id = NULL WHERE user_id = ?').run(userId);
-  const result = db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-  if (result.changes === 0) return res.status(404).json({ error: 'User account not found.' });
+  // Locking the admin rows makes "am I the last administrator?" safe even if two admins delete themselves at once.
+  const outcome = await tx(async (t) => {
+    if (me.role === 'admin') {
+      const admins = await t.all("SELECT id FROM users WHERE role = 'admin' FOR UPDATE");
+      if (admins.length <= 1) return 'last-admin';
+    }
+    await t.run('UPDATE orders SET user_id = NULL WHERE user_id = $1', [userId]);
+    const r = await t.run('DELETE FROM users WHERE id = $1', [userId]);   // sessions + verification codes cascade
+    return r.rowCount ? 'deleted' : 'missing';
+  });
+  if (outcome === 'last-admin') return res.status(400).json({ error: 'You are the only administrator, so this account cannot be deleted.' });
+  if (outcome === 'missing') return res.status(404).json({ error: 'User account not found.' });
 
-  S.destroyAllSessions(userId);
-  if (req.sessionHash) S.destroySession(req, res);
+  await S.audit(req, 'account_deleted', `role: ${me.role}`);
+  await S.destroyAllSessions(userId);
+  if (req.sessionHash) await S.destroySession(req, res);
   res.json({ ok: true, message: 'Account deleted successfully.' });
 }));
 

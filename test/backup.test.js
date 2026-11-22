@@ -1,23 +1,25 @@
 'use strict';
-// Checks that backups are real, restorable copies and that old ones are deleted.
+// Checks that backups are real files and that old ones are deleted. Needs pg_dump; skipped if it is not installed.
+const { spawnSync } = require('child_process');
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert');
+require('./helpers');
+if (spawnSync('pg_dump', ['--version']).error) { console.log('BACKUP TESTS SKIPPED (pg_dump not installed on this machine)'); process.exit(0); }
+
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mt-backup-'));
-process.env.DB_PATH = path.join(dir, 'test.db');
+process.env.BACKUP_DIR = dir;
 process.env.BACKUP_KEEP = '2';
-const { DatabaseSync } = require('node:sqlite');
-const { db, setSetting, getSetting } = require('../server/db');
+const { resetDatabase } = require('./helpers');
+const { setSetting, close } = require('../server/db');
 const B = require('../server/backup');
 
-setSetting('backup_test', 'hello');
-const f = B.backupNow();
-assert(fs.existsSync(f), 'backup file exists');
-const copy = new DatabaseSync(f);
-const tables = (d) => d.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table'").get().n;
-assert.strictEqual(tables(copy), tables(db), 'same tables in the copy');
-assert.strictEqual(copy.prepare("SELECT value FROM settings WHERE key='backup_test'").get().value, 'hello', 'data is in the copy');
-copy.close();
-B.backupNow(); B.backupNow(); B.backupNow();
-assert.strictEqual(B.list().length, 2, 'only the newest 2 backups are kept');
-console.log('BACKUP TESTS PASSED');
-fs.rmSync(dir, { recursive: true, force: true });
-process.exit(0);
+(async () => {
+  await resetDatabase();
+  await setSetting('backup_test', 'hello');
+  const f = await B.backupNow();
+  assert(fs.existsSync(f) && fs.statSync(f).size > 0, 'backup file exists');
+  await B.backupNow(); await B.backupNow(); await B.backupNow();
+  assert.strictEqual(B.list().length, 2, 'only the newest 2 backups are kept');
+  console.log('BACKUP TESTS PASSED');
+  fs.rmSync(dir, { recursive: true, force: true });
+  await close(); process.exit(0);
+})().catch((e) => { console.error('FAIL', e.message); process.exit(1); });

@@ -1,42 +1,41 @@
 // Security regression tests: starts the real server and checks the hardening described in SECURITY.md
-const path = require('path'), os = require('os'), fs = require('fs');
+const path = require('path');
 const assert = require('assert');
+const { resetDatabase, url: TEST_DB_URL } = require('./helpers');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const DB = path.join(os.tmpdir(), 'mosstech-sec-test.db');
-for (const ext of ['', '-wal', '-shm']) fs.rmSync(DB + ext, { force: true });
 const PORT = 3900 + Math.floor(Math.random() * 90);
 const BASE = `http://127.0.0.1:${PORT}`;
 const PASSKEY = 'Passkey#Strong-2026x';
 const totp = require('../server/totp');
 
 // ---------- in-process unit checks ----------
-process.env.DB_PATH = DB + '-unit';
-for (const ext of ['', '-wal', '-shm']) fs.rmSync(process.env.DB_PATH + ext, { force: true });
 const S = require('../server/security');
-const { db } = require('../server/db');
-assert(S.passkeyProblems('Short#1a').includes('at least 12 characters'), 'short passkey rejected');
-assert.deepEqual(S.passkeyProblems('Long#Passkey-2026'), [], 'long strong passkey accepted');
-// lockouts live in the database, expire by window, and never get shortened
-for (let i = 0; i < 5; i++) S.registerFail('t:unit');
-assert(S.lockRemaining('t:unit') > 0, 'locked after 5 failures');
-assert(db.prepare('SELECT until FROM lockouts WHERE key = ?').get('t:unit').until > Date.now(), 'lock is stored in the database');
-S.registerFail('t:unit');
-assert(S.lockRemaining('t:unit') > 0, 'extra failure does not unlock');
-S.clearFails('t:unit'); assert.equal(S.lockRemaining('t:unit'), 0);
-// audit log stores text safely
-S.audit({ ip: '1.2.3.4' }, 'unit_test', 'hello <b>x</b>');
-assert.equal(db.prepare("SELECT detail FROM audit_log WHERE action='unit_test'").get().detail, 'hello b x /b');
-// requireAdmin: an admin without 2FA can reach ONLY the setup routes
-const run = (user, p) => { let out = { status: 0 }; const res = { status(c) { out.status = c; return this; }, json(b) { out.body = b; } };
-  S.requireAdmin({ user, path: p }, res, () => { out.status = 200; }); return out; };
-assert.equal(run({ role: 'admin', needs2fa: true }, '/summary').status, 403);
-assert.equal(run({ role: 'admin', needs2fa: true }, '/2fa/setup').status, 200);
-assert.equal(run({ role: 'admin', needs2fa: false }, '/summary').status, 200);
-assert.equal(run({ role: 'user' }, '/2fa/setup').status, 403);
-assert.equal(run(null, '/summary').status, 401);
-console.log('unit checks ok');
+const { db, close: closeDb } = require('../server/db');
+async function unitChecks() {
+  assert(S.passkeyProblems('Short#1a').includes('at least 12 characters'), 'short passkey rejected');
+  assert.deepEqual(S.passkeyProblems('Long#Passkey-2026'), [], 'long strong passkey accepted');
+  // lockouts live in the database, expire by window, and never get shortened
+  for (let i = 0; i < 5; i++) await S.registerFail('t:unit');
+  assert((await S.lockRemaining('t:unit')) > 0, 'locked after 5 failures');
+  assert((await db.one('SELECT until FROM lockouts WHERE key = $1', ['t:unit'])).until > Date.now(), 'lock is stored in the database');
+  await S.registerFail('t:unit');
+  assert((await S.lockRemaining('t:unit')) > 0, 'extra failure does not unlock');
+  await S.clearFails('t:unit'); assert.equal(await S.lockRemaining('t:unit'), 0);
+  // audit log stores text safely
+  await S.audit({ ip: '1.2.3.4' }, 'unit_test', 'hello <b>x</b>');
+  assert.equal((await db.one("SELECT detail FROM audit_log WHERE action = 'unit_test'")).detail, 'hello b x /b');
+  // requireAdmin: an admin without 2FA can reach ONLY the setup routes
+  const run = (user, p) => { let out = { status: 0 }; const res = { status(c) { out.status = c; return this; }, json(b) { out.body = b; } };
+    S.requireAdmin({ user, path: p }, res, () => { out.status = 200; }); return out; };
+  assert.equal(run({ role: 'admin', needs2fa: true }, '/summary').status, 403);
+  assert.equal(run({ role: 'admin', needs2fa: true }, '/2fa/setup').status, 200);
+  assert.equal(run({ role: 'admin', needs2fa: false }, '/summary').status, 200);
+  assert.equal(run({ role: 'user' }, '/2fa/setup').status, 403);
+  assert.equal(run(null, '/summary').status, 401);
+  console.log('unit checks ok');
+}
 
 // ---------- integration: real server ----------
 function client(ip) {
@@ -56,9 +55,12 @@ const codeFor = (secret, stepOffset = 0) =>
   totp.hotp(totp.base32Decode(secret), Math.floor(Date.now() / 1000 / 30) + stepOffset);
 
 (async () => {
+  await resetDatabase();
+  await unitChecks();
+  await closeDb();
   const server = spawn(process.execPath, ['--no-warnings', 'server.js'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DB_PATH: DB, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', TRUST_PROXY: '1',
+    env: { ...process.env, DATABASE_URL: TEST_DB_URL, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', TRUST_PROXY: '1',
            ADMIN_PASSKEY: PASSKEY, REQUIRE_EMAIL_VERIFICATION: '0', REQUIRE_ADMIN_2FA: '1',
            SEED_ADMIN_USERNAME: '', SEED_ADMIN_EMAIL: '', SEED_ADMIN_PASSWORD: '', BREVO_API_KEY: '', SMTP_HOST: '' }
   });

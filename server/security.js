@@ -100,45 +100,47 @@ function parseCookies(header) {
 function cookieOptions() {
   return { httpOnly: true, sameSite: 'strict', secure: IS_PROD, path: '/', maxAge: SESSION_MAX_MS };
 }
-function createSession(res, userId) {
+async function createSession(res, userId) {
   const token = crypto.randomBytes(32).toString('base64url');
   const now = Date.now();
-  db.prepare('INSERT INTO sessions(token_hash, user_id, created_at, last_seen) VALUES(?,?,?,?)')
-    .run(sha256(token), userId, now, now);
+  await db.run('INSERT INTO sessions(token_hash, user_id, created_at, last_seen) VALUES($1,$2,$3,$4)',
+    [sha256(token), userId, now, now]);
   res.cookie(COOKIE, token, cookieOptions());
 }
-function destroySession(req, res) {
-  if (req.sessionHash) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(req.sessionHash);
+async function destroySession(req, res) {
+  if (req.sessionHash) await db.run('DELETE FROM sessions WHERE token_hash = $1', [req.sessionHash]);
   const { maxAge, ...opts } = cookieOptions();
   res.clearCookie(COOKIE, opts);
 }
-function destroyAllSessions(userId) {
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+async function destroyAllSessions(userId) {
+  await db.run('DELETE FROM sessions WHERE user_id = $1', [userId]);
 }
 // Attaches req.user (or null). The role is read from the database on every request.
-function loadUser(req, res, next) {
+async function loadUser(req, res, next) {
   req.user = null;
-  const token = parseCookies(req.headers.cookie)[COOKIE];
-  if (!token) return next();
-  const hash = sha256(token);
-  const row = db.prepare(
-    `SELECT s.created_at, s.last_seen, u.id, u.username, u.email, u.role, u.totp_enabled
-       FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`).get(hash);
-  if (!row) return next();
-  const now = Date.now();
-  const idle = IDLE_MS[row.role] || IDLE_MS.user;
-  if (now - row.created_at > SESSION_MAX_MS || now - row.last_seen > idle) {
-    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hash);
-    return next();
-  }
-  if (now - row.last_seen > 15000) db.prepare('UPDATE sessions SET last_seen = ? WHERE token_hash = ?').run(now, hash);
-  req.user = {
-    id: row.id, username: row.username, email: row.email, role: row.role,
-    // Administrators must turn on 2FA; until they do, the session can only reach the 2FA setup screens.
-    needs2fa: REQUIRE_ADMIN_2FA && row.role === 'admin' && !row.totp_enabled
-  };
-  req.sessionHash = hash;
-  next();
+  try {
+    const token = parseCookies(req.headers.cookie)[COOKIE];
+    if (!token) return next();
+    const hash = sha256(token);
+    const row = await db.one(
+      `SELECT s.created_at, s.last_seen, u.id, u.username, u.email, u.role, u.totp_enabled
+         FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1`, [hash]);
+    if (!row) return next();
+    const now = Date.now();
+    const idle = IDLE_MS[row.role] || IDLE_MS.user;
+    if (now - row.created_at > SESSION_MAX_MS || now - row.last_seen > idle) {
+      await db.run('DELETE FROM sessions WHERE token_hash = $1', [hash]);
+      return next();
+    }
+    if (now - row.last_seen > 15000) await db.run('UPDATE sessions SET last_seen = $1 WHERE token_hash = $2', [now, hash]);
+    req.user = {
+      id: row.id, username: row.username, email: row.email, role: row.role,
+      // Administrators must turn on 2FA; until they do, the session can only reach the 2FA setup screens.
+      needs2fa: REQUIRE_ADMIN_2FA && row.role === 'admin' && !row.totp_enabled
+    };
+    req.sessionHash = hash;
+    next();
+  } catch (e) { next(e); }
 }
 const requireAuth = (req, res, next) =>
   req.user ? next() : res.status(401).json({ error: 'Please log in.' });
@@ -153,7 +155,8 @@ const requireAdmin = (req, res, next) => {
 };
 setInterval(() => {
   const now = Date.now();
-  db.prepare('DELETE FROM sessions WHERE created_at < ? OR last_seen < ?').run(now - SESSION_MAX_MS, now - IDLE_MS.user);
+  db.run('DELETE FROM sessions WHERE created_at < $1 OR last_seen < $2', [now - SESSION_MAX_MS, now - IDLE_MS.user])
+    .catch((e) => console.error('session cleanup failed:', e.message));
 }, 10 * 60 * 1000).unref();
 
 // ------------------------------------------------------------------
@@ -189,43 +192,51 @@ function rateLimit({ windowMs, max, message, keyFn }) {
     next();
   };
 }
-// Stored in SQLite (table "lockouts"), so restarting the server does not wipe them.
+// Stored in PostgreSQL (table "lockouts"), so restarting the server does not wipe them.
 // Failures older than FAIL_WINDOW_MS stop counting. Login/verify/reset use keys that include the client IP,
 // so a stranger cannot lock a real user out of their own account just by guessing at it.
 const MAX_FAILS = 5, LOCK_MS = 60 * 1000, FAIL_WINDOW_MS = 15 * 60 * 1000;
 const lockKey = (key) => String(key).slice(0, 300);
-function lockRemaining(key) {
-  const f = db.prepare('SELECT until FROM lockouts WHERE key = ?').get(lockKey(key));
+async function lockRemaining(key) {
+  const f = await db.one('SELECT until FROM lockouts WHERE key = $1', [lockKey(key)]);
   return f && f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 1000) : 0;
 }
-function registerFail(key, opts = {}) {
+// The counter is bumped by ONE atomic statement: with a real multi-connection database, a read-then-write
+// would let an attacker who fires many guesses in parallel slip past the limit.
+async function registerFail(key, opts = {}) {
   const max = opts.max || MAX_FAILS, lockMs = opts.lockMs || LOCK_MS;
   const k = lockKey(key), now = Date.now();
-  const f = db.prepare('SELECT count, last_fail, until FROM lockouts WHERE key = ?').get(k);
-  let count = (f && now - f.last_fail <= FAIL_WINDOW_MS ? f.count : 0) + 1;
-  let until = f ? f.until : 0;               // never shorten a lock that is already running
-  if (count >= max) { until = Math.max(until, now + lockMs); count = 0; }
-  db.prepare(`INSERT INTO lockouts(key, count, last_fail, until) VALUES(?,?,?,?)
-              ON CONFLICT(key) DO UPDATE SET count = excluded.count, last_fail = excluded.last_fail, until = excluded.until`)
-    .run(k, count, now, until);
+  const row = await db.one(
+    `INSERT INTO lockouts(key, count, last_fail, until) VALUES($1, 1, $2::bigint, 0)
+     ON CONFLICT (key) DO UPDATE SET
+       count = CASE WHEN $2::bigint - lockouts.last_fail <= $3::bigint THEN lockouts.count + 1 ELSE 1 END,
+       last_fail = $2::bigint
+     RETURNING count`, [k, now, FAIL_WINDOW_MS]);
+  if (row.count >= max) {
+    // never shorten a lock that is already running (GREATEST), and start counting from zero again
+    await db.run('UPDATE lockouts SET until = GREATEST(until, $2::bigint), count = 0 WHERE key = $1', [k, now + lockMs]);
+  }
 }
-const clearFails = (key) => { db.prepare('DELETE FROM lockouts WHERE key = ?').run(lockKey(key)); };
+const clearFails = async (key) => { await db.run('DELETE FROM lockouts WHERE key = $1', [lockKey(key)]); };
 const AUDIT_KEEP_MS = 180 * 24 * 60 * 60 * 1000;
-setInterval(() => {
+setInterval(async () => {
   const n = Date.now();
-  db.prepare('DELETE FROM lockouts WHERE until < ? AND last_fail < ?').run(n, n - FAIL_WINDOW_MS);
-  db.prepare('DELETE FROM audit_log WHERE ts < ?').run(n - AUDIT_KEEP_MS);
+  try {
+    await db.run('DELETE FROM lockouts WHERE until < $1 AND last_fail < $2', [n, n - FAIL_WINDOW_MS]);
+    await db.run('DELETE FROM audit_log WHERE ts < $1', [n - AUDIT_KEEP_MS]);
+  } catch (e) { console.error('housekeeping failed:', e.message); }
 }, 5 * 60 * 1000).unref();
 
 // ------------------------------------------------------------------
 // Audit log: who did what, when, from where. Never pass secrets in `detail`.
 // ------------------------------------------------------------------
-function audit(req, action, detail = '', actor = null) {
+// Async but never throws: a failing audit write must not break the request. Await it where the order matters.
+async function audit(req, action, detail = '', actor = null) {
   try {
     const u = actor || (req && req.user) || null;
-    db.prepare('INSERT INTO audit_log(ts, user_id, username, action, detail, ip) VALUES(?,?,?,?,?,?)')
-      .run(Date.now(), u ? u.id : null, u ? u.username : null, String(action).slice(0, 60),
-           cleanText(detail, 300), req && req.ip ? String(req.ip).slice(0, 60) : null);
+    await db.run('INSERT INTO audit_log(ts, user_id, username, action, detail, ip) VALUES($1,$2,$3,$4,$5,$6)',
+      [Date.now(), u ? u.id : null, u ? u.username : null, String(action).slice(0, 60),
+       cleanText(detail, 300), req && req.ip ? String(req.ip).slice(0, 60) : null]);
   } catch (e) { console.error('audit log failed:', e.message); }
 }
 

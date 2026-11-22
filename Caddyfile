@@ -1,0 +1,7 @@
+# Optional HTTPS reverse proxy (docker compose --profile proxy up -d).
+# DOMAIN must point at this server's public IP and ports 80/443 must be open; Caddy then gets a free
+# Let's Encrypt certificate by itself. With DOMAIN=localhost it uses a local self-signed certificate.
+{$DOMAIN:localhost} {
+	encode gzip
+	reverse_proxy app:3000
+}

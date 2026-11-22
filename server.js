@@ -1,7 +1,8 @@
 'use strict';
 const path = require('path');
 const express = require('express');
-const { db, getSetting, setSetting } = require('./server/db');
+const { db, getSetting, setSetting, waitForDb, close: closeDb } = require('./server/db');
+const { migrate } = require('./server/migrate');
 const S = require('./server/security');
 const { seedProductsFromHtml } = require('./server/seed');
 
@@ -17,6 +18,11 @@ else if (IS_PROD) console.warn('! NODE_ENV=production but TRUST_PROXY is not 1. 
 
 // Health check for hosting platforms (before the HTTPS redirect so probes always work)
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
+// Readiness: also proves the database answers (used by the Docker HEALTHCHECK)
+app.get('/readyz', async (req, res) => {
+  try { await db.one('SELECT 1'); res.type('text').send('ok'); }
+  catch (e) { res.status(503).type('text').send('database unavailable'); }
+});
 // Hosting platforms terminate HTTPS and tell us the original protocol: send plain-HTTP visitors to HTTPS
 if (IS_PROD) {
   app.use((req, res, next) => {
@@ -70,27 +76,46 @@ app.use((err, req, res, next) => {
 });
 
 (async () => {
+  // 1. Wait for PostgreSQL (retries with back-off), 2. create/upgrade the tables, 3. first-run data, 4. listen
+  await waitForDb();
+  if (process.env.AUTO_MIGRATE !== '0') await migrate();   // AUTO_MIGRATE=0: run `npm run migrate` yourself instead
+
   // First run: store the admin passkey (hashed) from .env, and load products from product.html
   const wanted = process.env.ADMIN_PASSKEY;
-  if (!getSetting('admin_passkey_hash')) {
+  if (!await getSetting('admin_passkey_hash')) {
     if (!wanted) console.warn('! ADMIN_PASSKEY is not set: administrator sign-up is disabled until you set it in .env');
     else if (S.passkeyProblems(wanted).length) console.warn('! ADMIN_PASSKEY is too weak (needs 12+ chars, upper, lower, number, symbol). Admin sign-up stays disabled.');
-    else { setSetting('admin_passkey_hash', await S.hashSecret(wanted)); console.log('Admin passkey saved (hashed).'); }
+    else { await setSetting('admin_passkey_hash', await S.hashSecret(wanted)); console.log('Admin passkey saved (hashed).'); }
   }
   // Optional: create the first administrator from environment variables (useful on hosts with temporary storage)
   const { SEED_ADMIN_USERNAME: su, SEED_ADMIN_EMAIL: se, SEED_ADMIN_PASSWORD: sp } = process.env;
   if (su && se && sp) {
     if (!S.isValidUsername(su) || !S.isValidEmail(se.toLowerCase()) || S.passwordProblems(sp).length) {
       console.warn('! SEED_ADMIN_* values are invalid (username 3-20 letters/numbers/_, valid email, strong password). Skipped.');
-    } else if (!db.prepare('SELECT 1 FROM users WHERE username = ? OR email = ?').get(su, se.toLowerCase())) {
-      db.prepare("INSERT INTO users(username, email, role, pw_hash, email_verified) VALUES(?,?, 'admin', ?, 1)")
-        .run(su, se.toLowerCase(), await S.hashSecret(sp));
+    } else if (!await db.one('SELECT 1 FROM users WHERE username = $1 OR email = $2', [su, se.toLowerCase()])) {
+      await db.run("INSERT INTO users(username, email, role, pw_hash, email_verified) VALUES($1,$2,'admin',$3,1) ON CONFLICT DO NOTHING",
+        [su, se.toLowerCase(), await S.hashSecret(sp)]);
       console.log(`Administrator account "${su}" created from environment variables.`);
     }
   }
-  const seeded = seedProductsFromHtml(path.join(PUBLIC_DIR, 'product.html'));
+  const seeded = await seedProductsFromHtml(path.join(PUBLIC_DIR, 'product.html'));
   if (seeded) console.log(`Loaded ${seeded} products from product.html`);
 
   require('./server/backup').schedule();
-  app.listen(PORT, HOST, () => console.log(`MOSSTECH running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));
-})();
+  const server = app.listen(PORT, HOST, () => console.log(`MOSSTECH running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`));
+
+  // `docker stop` sends SIGTERM: finish in-flight requests, close the database pool, then exit
+  let stopping = false;
+  const shutdown = (signal) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`${signal} received, shutting down...`);
+    setTimeout(() => process.exit(1), 10000).unref();   // hard stop if something hangs
+    server.close(async () => { try { await closeDb(); } catch (_) { /* ignore */ } process.exit(0); });
+    if (server.closeIdleConnections) server.closeIdleConnections();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+})().catch((e) => { console.error('Startup failed:', e.message); process.exit(1); });
+
+process.on('unhandledRejection', (e) => console.error('Unhandled rejection:', e));

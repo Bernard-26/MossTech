@@ -1,0 +1,21 @@
+# keep the build context small and never bake secrets or local data into the image
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.vscode
+.env
+.env.*
+!.env.example
+data
+backups
+*.db
+*.db-wal
+*.db-shm
+test
+Dockerfile
+.dockerignore
+docker-compose*.yml
+Caddyfile
+render.yaml
+*.md

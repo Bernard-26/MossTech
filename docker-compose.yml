@@ -1,0 +1,91 @@
+# MOSSTECH: Node/Express app + PostgreSQL.
+#   docker compose up -d --build
+# All settings come from the .env file next to this one (copy .env.example to .env first).
+name: mosstech
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mosstech}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mosstech}
+    volumes:
+      - pgdata:/var/lib/postgresql/data      # persistent: survives "docker compose down" (NOT "down -v")
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # The database is only reachable from the app (internal network). To use pgAdmin/DBeaver from your own
+    # computer, uncomment the next two lines:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  app:
+    build: .
+    image: mosstech:latest
+    restart: unless-stopped
+    init: true                                 # proper signal handling / zombie reaping
+    depends_on:
+      postgres:
+        condition: service_healthy             # wait until PostgreSQL accepts connections
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HOST: 0.0.0.0                            # must listen on all interfaces inside a container
+      PORT: 3000
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      # Database (the app retries the connection on start, so a slow database is fine)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-mosstech}
+      DB_USER: ${POSTGRES_USER:-mosstech}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-1}
+      # Site settings
+      ADMIN_PASSKEY: ${ADMIN_PASSKEY:-}
+      REQUIRE_ADMIN_2FA: ${REQUIRE_ADMIN_2FA:-1}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-1}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-0}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      BACKUP_EVERY_HOURS: ${BACKUP_EVERY_HOURS:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+    volumes:
+      - app_backups:/app/backups
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: automatic HTTPS in front of the app.  docker compose --profile proxy up -d
+  caddy:
+    profiles: ["proxy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  app_backups:
+  caddy_data:
+  caddy_config:

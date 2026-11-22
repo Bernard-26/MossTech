@@ -1,4 +1,6 @@
-# MOSSTECH – Express + SQLite back-end
+# MOSSTECH – Express + PostgreSQL back-end
+
+> The database is now PostgreSQL. Run it with Docker: see **DOCKER.md**.
 
 ## 1. Setup (Windows / Mac / Linux)
 
@@ -30,7 +32,9 @@ Online hosting: see **DEPLOY.md**.
 
 ```
 server.js               app setup, security headers, routes, error handling
-server/db.js            SQLite tables (users, sessions, products, orders, order_items, settings)
+server/db.js            PostgreSQL connection pool (env config, startup retries, transactions)
+server/migrate.js       applies db/migrations/*.sql (the tables) once each
+db/migrations/          SQL schema files (001_init.sql)
 server/security.js      password hashing, sessions, CSRF, rate limits, headers, validation
 server/totp.js          authenticator-app codes (2FA), no extra package
 server/twofactor.js     checks an authenticator or backup code
@@ -42,7 +46,7 @@ server/routes/auth.js   signup, login, logout, me, forgot/reset password
 server/routes/shop.js   products list, place order, track order
 server/routes/admin.js  admin-only: users, products, orders, settings, passkey
 public/                 your website (HTML/CSS/JS). common.js is new and shared by every page
-data/mosstech.db        created automatically (never commit it)
+Dockerfile, docker-compose.yml, .env.example   Docker deployment (see DOCKER.md)
 ```
 
 ## 3. What changed in the front-end
@@ -80,4 +84,4 @@ data/mosstech.db        created automatically (never commit it)
 * Rate-limit counters and reset codes live in memory, so they reset when the server restarts. Fine for a capstone; use Redis for a large deployment.
 * `login.html` and `admin.html` still use inline `onclick="..."` attributes, so the CSP has `script-src-attr 'unsafe-inline'`. To tighten it, replace those attributes with `addEventListener` calls and delete that CSP line in `server/security.js`.
 * The "Default Shipping Fee" setting is saved, but checkout does not add shipping yet (it did not before either).
-* Back up `data/mosstech.db` (it also creates `-wal`/`-shm` files while running).
+* Back up the PostgreSQL database with `pg_dump` (see DOCKER.md). The old `data/mosstech.db` file is only needed once, to import it with `npm run import:sqlite`.

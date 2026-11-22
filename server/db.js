@@ -1,134 +1,103 @@
 'use strict';
-// SQLite database (built into Node 22.13+, no extra install needed)
-const fs = require('fs');
-const path = require('path');
-const { DatabaseSync } = require('node:sqlite');
+// PostgreSQL access layer (node-postgres). Every call is async: always `await` it.
+//
+// Connection settings come from the environment:
+//   DATABASE_URL                       postgres://user:pass@host:5432/dbname   (wins if set; URL-encode odd characters in the password)
+//   or DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD
+//   DB_SSL=1                           use TLS (managed databases); DB_SSL_REJECT_UNAUTHORIZED=0 only for self-signed certs
+//   DB_POOL_MAX, DB_CONNECT_TIMEOUT_MS
+//   DB_CONNECT_RETRIES, DB_CONNECT_DELAY_MS   how long waitForDb() keeps trying at startup
+const { Pool, types } = require('pg');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'mosstech.db');
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+// pg returns BIGINT and NUMERIC as strings by default. This app only stores values that fit safely in a
+// JS number (millisecond timestamps, prices with 2 decimals, row counts), so hand them back as numbers.
+types.setTypeParser(20, (v) => Number(v));     // int8 / bigint (also COUNT(*))
+types.setTypeParser(1700, (v) => Number(v));   // numeric
 
-const db = new DatabaseSync(DB_PATH);
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  username   TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  email      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin')),
-  pw_hash    TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS sessions (
-  token_hash TEXT PRIMARY KEY,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at INTEGER NOT NULL,
-  last_seen  INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS products (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  name      TEXT NOT NULL,
-  price     REAL NOT NULL CHECK (price >= 0),
-  stock     INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
-  image_url TEXT NOT NULL DEFAULT 'pics/default.jpg',
-  category  TEXT NOT NULL DEFAULT 'other',
-  brand     TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS orders (
-  id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_number     TEXT NOT NULL UNIQUE,
-  user_id          INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  customer_name    TEXT NOT NULL,
-  customer_email   TEXT NOT NULL,
-  customer_phone   TEXT NOT NULL,
-  customer_address TEXT NOT NULL,
-  payment_method   TEXT NOT NULL,
-  total_amount     REAL NOT NULL,
-  order_date       TEXT NOT NULL,
-  status           TEXT NOT NULL DEFAULT 'Processing'
-);
-CREATE TABLE IF NOT EXISTS order_items (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-  product_id INTEGER,
-  name       TEXT NOT NULL,
-  price      REAL NOT NULL,
-  quantity   INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_orders_email ON orders(customer_email);
-CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-`);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS email_verifications (
-  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  code_hash  TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  tries      INTEGER NOT NULL DEFAULT 0,
-  sent_at    INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS totp_backup (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  code_hash TEXT NOT NULL,
-  used      INTEGER NOT NULL DEFAULT 0
-);
--- Failed-attempt counters / lockouts live in the database so a server restart does not clear them
-CREATE TABLE IF NOT EXISTS lockouts (
-  key       TEXT PRIMARY KEY,
-  count     INTEGER NOT NULL DEFAULT 0,
-  last_fail INTEGER NOT NULL,
-  until     INTEGER NOT NULL DEFAULT 0
-);
--- Security audit trail (logins, resets, admin actions). Never stores passwords, codes or tokens.
-CREATE TABLE IF NOT EXISTS audit_log (
-  id       INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts       INTEGER NOT NULL,
-  user_id  INTEGER,
-  username TEXT,
-  action   TEXT NOT NULL,
-  detail   TEXT NOT NULL DEFAULT '',
-  ip       TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
-`);
-
-// Upgrade an existing database in place (adds new columns without losing data)
-function addColumnIfMissing(table, column, ddl) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-  if (cols.includes(column)) return false;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
-  return true;
+function sslOption() {
+  const mode = String(process.env.DB_SSL || '').toLowerCase();
+  if (!mode || ['0', 'false', 'off', 'disable'].includes(mode)) return undefined;
+  return { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== '0' };
 }
-// Accounts that existed before email verification was added are treated as verified
-if (addColumnIfMissing('users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0')) db.exec('UPDATE users SET email_verified = 1');
-// Discounts: a whole-number percentage per product. First upgrade also loads the starting deals.
-if (addColumnIfMissing('products', 'discount_percent', 'INTEGER NOT NULL DEFAULT 0 CHECK (discount_percent BETWEEN 0 AND 90)')) {
-  const { DEFAULT_DEALS } = require('./pricing');
-  const setDeal = db.prepare('UPDATE products SET discount_percent = ? WHERE id = ?');
-  for (const [id, pct] of Object.entries(DEFAULT_DEALS)) setDeal.run(pct, Number(id));
-}
-addColumnIfMissing('users', 'totp_secret', 'TEXT');
-addColumnIfMissing('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('users', 'totp_last_step', 'INTEGER NOT NULL DEFAULT 0');
 
-function getSetting(key, fallback = null) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+function poolConfig() {
+  const common = {
+    max: Number(process.env.DB_POOL_MAX) || 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS) || 5000,
+    application_name: 'mosstech',
+    ssl: sslOption()
+  };
+  if (process.env.DATABASE_URL) return { ...common, connectionString: process.env.DATABASE_URL };
+  return {
+    ...common,
+    host: process.env.DB_HOST || 'localhost',
+    port: Number(process.env.DB_PORT) || 5432,
+    database: process.env.DB_NAME || 'mosstech',
+    user: process.env.DB_USER || 'mosstech',
+    password: process.env.DB_PASSWORD
+  };
+}
+
+const pool = new Pool(poolConfig());
+// Without this listener a dropped idle connection (database restart) would crash the whole process.
+pool.on('error', (err) => console.error('PostgreSQL idle client error:', err.message));
+
+// Same small API for the pool and for a transaction client.
+const api = (executor) => ({
+  query: (text, params) => executor.query(text, params),
+  async all(text, params) { return (await executor.query(text, params)).rows; },
+  async one(text, params) { return (await executor.query(text, params)).rows[0] || null; },
+  async run(text, params) { const r = await executor.query(text, params); return { rowCount: r.rowCount, rows: r.rows }; }
+});
+const db = api(pool);
+
+// Run fn(t) inside one all-or-nothing transaction. Use t.one / t.all / t.run for every query inside it.
+async function tx(fn) {
+  const client = await pool.connect();
+  let broken = false;
+  try {
+    await client.query('BEGIN');
+    const result = await fn(api(client));
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { broken = true; }   // connection is dead: do not reuse it
+    throw e;
+  } finally {
+    client.release(broken);
+  }
+}
+
+async function getSetting(key, fallback = null) {
+  const row = await db.one('SELECT value FROM settings WHERE key = $1', [key]);
   return row ? row.value : fallback;
 }
-function setSetting(key, value) {
-  db.prepare('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run(key, String(value));
-}
-// Run fn() inside one all-or-nothing transaction
-function tx(fn) {
-  db.exec('BEGIN IMMEDIATE');
-  try { const r = fn(); db.exec('COMMIT'); return r; }
-  catch (e) { db.exec('ROLLBACK'); throw e; }
+async function setSetting(key, value) {
+  await db.run('INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+    [key, String(value)]);
 }
 
-module.exports = { db, getSetting, setSetting, tx };
+// Wait for PostgreSQL to accept connections (it can take a few seconds after `docker compose up`).
+// Retries with a growing delay; gives up at once for errors that waiting cannot fix.
+const FATAL = { '28P01': 'wrong database user or password', '28000': 'database user is not allowed to connect', '3D000': 'that database does not exist' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitForDb({ retries = Number(process.env.DB_CONNECT_RETRIES) || 30, delayMs = Number(process.env.DB_CONNECT_DELAY_MS) || 2000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await pool.query('SELECT 1');
+      if (attempt > 1) console.log(`PostgreSQL is reachable (attempt ${attempt}).`);
+      return;
+    } catch (e) {
+      if (FATAL[e.code]) throw new Error(`PostgreSQL refused the connection: ${FATAL[e.code]} (${e.message})`);
+      if (attempt >= retries) throw new Error(`Could not connect to PostgreSQL after ${attempt} attempts: ${e.message}`);
+      const wait = Math.min(delayMs * Math.pow(1.5, attempt - 1), 10000);
+      console.warn(`PostgreSQL not ready (attempt ${attempt}/${retries}): ${e.message || e.code}. Retrying in ${Math.round(wait / 1000)}s...`);
+      await sleep(wait);
+    }
+  }
+}
+
+const close = () => pool.end();
+
+module.exports = { db, pool, tx, getSetting, setSetting, waitForDb, close };

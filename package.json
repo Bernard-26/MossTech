@@ -1,11 +1,13 @@
 {
   "name": "mosstech",
   "version": "1.0.0",
-  "description": "MOSSTECH gadget store with Express + SQLite back-end",
+  "description": "MOSSTECH gadget store with Express + PostgreSQL back-end",
   "private": true,
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
-    "test": "node --no-warnings test/logic.test.js && node --no-warnings test/security.test.js && node --no-warnings test/backup.test.js",
+    "migrate": "node --env-file-if-exists=.env server/migrate.js",
+    "import:sqlite": "node --env-file-if-exists=.env scripts/import-sqlite.js",
+    "test": "node test/logic.test.js && node test/security.test.js && node test/backup.test.js",
     "backup": "node --env-file-if-exists=.env server/backup.js"
   },
   "engines": {
@@ -14,6 +16,7 @@
   "dependencies": {
     "express": "^4.21.2",
     "nodemailer": "^10.3.1",
+    "pg": "^8.13.0",
     "qrcode": "^1.5.4"
   }
 }
